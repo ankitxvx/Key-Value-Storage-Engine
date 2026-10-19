@@ -49,6 +49,15 @@ void File::sync() {
 #endif
 }
 
+void File::sync_data() {
+#ifdef __linux__
+    if (std::fflush(file_) != 0) fail("File flush failed");
+    if (::fdatasync(fileno(file_)) != 0) fail("File data sync failed");
+#else
+    sync();
+#endif
+}
+
 void File::seek(std::uint64_t position) {
 #ifdef _WIN32
     if (_fseeki64(file_, static_cast<__int64>(position), SEEK_SET) != 0)

@@ -19,7 +19,6 @@ struct Options {
     std::size_t cache_bytes = 8 * 1024 * 1024;
     std::size_t bloom_bits_per_key = 10; // Zero disables Bloom filters.
     std::size_t compaction_table_trigger = 8; // Zero disables automatic compaction.
-    std::uint32_t group_commit_delay_us = 200;
     // Test seam: may throw or terminate the process. Called on caller/worker threads.
     std::function<void(std::string_view)> fault_injector;
     // False forces one durable WAL sync per request, without a collection delay.
@@ -66,6 +65,7 @@ struct Metrics {
     std::uint64_t sequence = 0, checkpoint = 0, sstable_bytes = 0;
     std::size_t sstables = 0, sparse_index_entries = 0, bloom_bytes = 0;
     std::size_t cache_bytes = 0, memtable_bytes = 0, active_snapshots = 0;
+    std::size_t pending_writers = 0;
 };
 
 // A snapshot belongs to one open Store instance and pins a logical version.

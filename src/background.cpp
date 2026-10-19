@@ -26,6 +26,8 @@ void Store::Impl::work() noexcept {
                 guard.unlock();
                 auto table = write_table(path, *data, options);
                 guard.lock();
+                checkpoint_pending = true;
+                cv.wait(guard, [&] { return error || !writer_active; });
                 healthy();
                 auto updated = tables;
                 updated.push_back(std::move(table));
@@ -34,6 +36,7 @@ void Store::Impl::work() noexcept {
                 tables = std::move(updated);
                 checkpoint = target;
                 checkpoint_wal();
+                checkpoint_pending = false;
                 immutable.reset(); immutable_bytes = 0;
                 ++counters.flushes;
                 cv.notify_all();

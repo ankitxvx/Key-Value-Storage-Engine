@@ -1,4 +1,9 @@
-# Durable commit comparison ? 2026-10-19
+# Durable commit comparison - 2026-10-19
+
+**Historical result for commit `835b89e`.** The collection timer and queue
+admission have since been revised. See the [investigation](group-commit-investigation.md)
+for the diagnosis and same-machine rerun; do not use this old comparison as the
+current implementation's performance claim.
 
 The previous resume claim, ?500 to 125 syncs,? was a batching observation, not
 proof of better throughput or commit latency. This experiment compares a strict

@@ -7,6 +7,7 @@
 #include <iomanip>
 #include <iostream>
 #include <mutex>
+#include <numeric>
 #include <stdexcept>
 #include <thread>
 
@@ -14,7 +15,7 @@ using Clock = std::chrono::steady_clock;
 namespace fs = std::filesystem;
 
 struct Result {
-    double seconds, throughput, p50_us, p95_us, p99_us, max_us;
+    double seconds, throughput, mean_us, p50_us, p95_us, p99_us, p999_us, max_us;
     std::uint64_t syncs;
 };
 
@@ -76,7 +77,9 @@ Result run(const fs::path& directory, std::size_t count, std::size_t writers, bo
         std::sort(all.begin(), all.end());
         const auto quantile = [&](double q) { return all[static_cast<std::size_t>(std::ceil(q * all.size())) - 1]; };
         result.throughput = count / result.seconds;
+        result.mean_us = std::accumulate(all.begin(), all.end(), 0.0) / all.size();
         result.p50_us = quantile(.50); result.p95_us = quantile(.95); result.p99_us = quantile(.99);
+        result.p999_us = quantile(.999);
         result.max_us = all.back();
         const auto after = db.metrics();
         result.syncs = after.wal_syncs - before.wal_syncs;
@@ -96,8 +99,8 @@ Result run(const fs::path& directory, std::size_t count, std::size_t writers, bo
 
 int main(int argc, char** argv) {
     try {
-        const auto count = argc > 1 ? std::stoull(argv[1]) : 4096;
-        const auto rounds = argc > 2 ? std::stoull(argv[2]) : 3;
+        const auto count = argc > 1 ? std::stoull(argv[1]) : 32768;
+        const auto rounds = argc > 2 ? std::stoull(argv[2]) : 10;
         if (count < 1024 || count > 1000000 || !rounds || rounds > 100)
             throw std::invalid_argument("Usage: kv_commit_bench [operations 1024..1000000] [rounds 1..100] [new CSV path] [existing data parent]");
         const fs::path csv = argc > 3 ? fs::path(argv[3]) : fs::path("commit-results.csv");
@@ -107,7 +110,7 @@ int main(int argc, char** argv) {
         if (!fs::create_directory(root)) throw std::runtime_error("Could not create unique benchmark directory");
         std::ofstream output(csv);
         if (!output) throw std::runtime_error("Cannot open CSV output");
-        output << "round,writers,group_commit,operations,value_bytes,delay_us,seconds,ops_per_sec,p50_us,p95_us,p99_us,max_us,wal_syncs\n";
+        output << "round,writers,group_commit,operations,value_bytes,delay_us,seconds,ops_per_sec,mean_us,p50_us,p95_us,p99_us,p999_us,max_us,wal_syncs\n";
         output << std::fixed << std::setprecision(3);
         std::cout << "Data parent: " << fs::absolute(parent) << "\nDurable sync enabled for every request/group.\n";
         // Reverse case order on alternating rounds to reduce order/warmup bias.
@@ -118,9 +121,9 @@ int main(int argc, char** argv) {
                 const auto writers = test.first;
                 const auto grouped = test.second;
                 const auto r = run(root / (std::to_string(round) + "-" + std::to_string(writers) + (grouped ? "-on" : "-off")), count, writers, grouped);
-                output << round << ',' << writers << ',' << grouped << ',' << count << ",128," << (grouped ? 200 : 0)
-                       << ',' << r.seconds << ',' << r.throughput << ',' << r.p50_us << ',' << r.p95_us
-                       << ',' << r.p99_us << ',' << r.max_us << ',' << r.syncs << '\n';
+                output << round << ',' << writers << ',' << grouped << ',' << count << ",128,0"
+                       << ',' << r.seconds << ',' << r.throughput << ',' << r.mean_us << ',' << r.p50_us << ',' << r.p95_us
+                       << ',' << r.p99_us << ',' << r.p999_us << ',' << r.max_us << ',' << r.syncs << '\n';
                 output.flush();
                 if (!output) throw std::runtime_error("CSV write failed");
                 std::cout << "Round " << round << ", writers=" << writers << ", group=" << grouped

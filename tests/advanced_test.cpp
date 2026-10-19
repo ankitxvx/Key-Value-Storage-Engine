@@ -64,7 +64,7 @@ int main(int argc, char** argv) {
     if (argc == 4 && std::string(argv[1]) == "--crash") {
         const std::string stage = argv[3];
         std::atomic<bool> armed{false};
-        kv::Options options; options.compaction_table_trigger = 0; options.group_commit_delay_us = 0;
+        kv::Options options; options.compaction_table_trigger = 0;
         options.fault_injector = [&](std::string_view point) { if (armed && point == stage) std::_Exit(77); };
         kv::Store db(argv[2], options);
         db.write_batch({kv::Mutation::put("stable", "old"), kv::Mutation::put("gone", "old")});
@@ -84,7 +84,7 @@ int main(int argc, char** argv) {
         ("kv-advanced-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     try {
         fs::create_directories(root);
-        kv::Options manual; manual.compaction_table_trigger = 0; manual.group_commit_delay_us = 0;
+        kv::Options manual; manual.compaction_table_trigger = 0;
         {
             kv::Store db(root / "compact", manual);
             db.put("key", "one"); db.put("gone", "old"); db.flush();
@@ -161,7 +161,7 @@ int main(int argc, char** argv) {
             check(db.metrics().cache_bytes <= opts.cache_bytes, "cache over budget");
         }
         {
-            auto opts = manual; opts.group_commit_delay_us = 10000;
+            auto opts = manual;
             kv::Store db(root / "group", opts);
             std::atomic<int> ready{0}; std::atomic<bool> go{false}, okay{true};
             std::vector<std::thread> threads;
@@ -176,7 +176,7 @@ int main(int argc, char** argv) {
                   "group commit did not combine writes");
         }
         {
-            auto opts = manual; opts.group_commit = false; opts.group_commit_delay_us = 1000000;
+            auto opts = manual; opts.group_commit = false;
             kv::Store db(root / "group-disabled", opts);
             std::vector<std::thread> writers;
             std::atomic<bool> okay{true};
@@ -187,6 +187,60 @@ int main(int argc, char** argv) {
             for (auto& writer : writers) writer.join();
             check(okay && db.metrics().writes == 32 && db.metrics().wal_syncs == 32 && db.metrics().grouped_requests == 0,
                   "disabled group commit combined requests");
+        }
+        for (const bool grouped : {false, true}) {
+            auto opts = manual; opts.group_commit = grouped;
+            std::promise<void> reached, release;
+            auto released = release.get_future().share();
+            std::atomic<bool> first{true};
+            opts.fault_injector = [&](std::string_view point) {
+                if (point == "wal.sync" && first.exchange(false)) { reached.set_value(); released.wait(); }
+            };
+            kv::Store db(root / (grouped ? "fifo-group" : "fifo-single"), opts);
+            std::vector<std::future<void>> writers;
+            writers.push_back(std::async(std::launch::async, [&] { db.put("shared", "0"); }));
+            const bool started = reached.get_future().wait_for(5s) == std::future_status::ready;
+            if (!started) release.set_value();
+            check(started, "leader did not enter sync");
+            bool admitted = true;
+            for (int i = 1; i <= 4; ++i) {
+                writers.push_back(std::async(std::launch::async, [&, i] { db.put("shared", std::to_string(i)); }));
+                const auto deadline = std::chrono::steady_clock::now() + 2s;
+                while (db.metrics().pending_writers < static_cast<std::size_t>(i + 1) && std::chrono::steady_clock::now() < deadline)
+                    std::this_thread::yield();
+                if (db.metrics().pending_writers != static_cast<std::size_t>(i + 1)) { admitted = false; break; }
+            }
+            const bool unpublished = !db.get("shared");
+            release.set_value();
+            for (auto& writer : writers) writer.get();
+            check(admitted && unpublished && db.get("shared") == "4", "FIFO admission or atomic publication failed");
+            check(db.metrics().wal_syncs == (grouped ? 2 : 5), "leader did not drain queued followers correctly");
+        }
+        {
+            // A checkpoint must wait for the in-flight WAL owner before replacement.
+            auto opts = manual;
+            std::promise<void> syncing, table_ready, release;
+            auto released = release.get_future().share();
+            std::atomic<bool> armed{false}, paused{false}, signaled{false};
+            opts.fault_injector = [&](std::string_view point) {
+                if (armed && point == "wal.sync" && !paused.exchange(true)) { syncing.set_value(); released.wait(); }
+                if (point == "table.publish" && !signaled.exchange(true)) table_ready.set_value();
+            };
+            {
+                kv::Store db(root / "checkpoint-writer", opts);
+                db.put("before", "checkpoint"); armed = true;
+                auto writer = std::async(std::launch::async, [&] { db.put("during", "wal"); });
+                const bool started = syncing.get_future().wait_for(5s) == std::future_status::ready;
+                if (!started) release.set_value();
+                check(started, "writer did not reach data sync");
+                auto flush = std::async(std::launch::async, [&] { db.flush(); });
+                const bool table_written = table_ready.get_future().wait_for(5s) == std::future_status::ready;
+                const bool waited = flush.wait_for(20ms) == std::future_status::timeout;
+                release.set_value(); writer.get(); flush.get();
+                check(table_written && waited && db.get("during") == "wal", "checkpoint replaced an active WAL");
+            }
+            kv::Store reopened(root / "checkpoint-writer", manual);
+            check(reopened.get("before") == "checkpoint" && reopened.get("during") == "wal", "checkpoint/WAL race lost data");
         }
         {
             // Hold table IO outside the mutex; a foreground write must still finish.
@@ -259,7 +313,7 @@ int main(int argc, char** argv) {
         }
         {
             // All waiters must receive a group failure without hanging or losing the lock.
-            auto opts = manual; opts.group_commit_delay_us = 10000;
+            auto opts = manual;
             opts.fault_injector = [](std::string_view point) { if (point == "wal.sync") throw std::runtime_error("sync failed"); };
             kv::Store db(root / "group-failure", opts);
             std::atomic<int> failed{0}, ready{0}; std::atomic<bool> go{false};
