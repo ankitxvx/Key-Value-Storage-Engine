@@ -50,7 +50,6 @@ Metrics Store::metrics() const {
     result.sequence = impl_->sequence; result.checkpoint = impl_->checkpoint;
     result.sstables = impl_->tables.size(); result.memtable_bytes = impl_->memory_bytes + impl_->immutable_bytes;
     result.cache_bytes = impl_->cache_size;
-    result.pending_writers = impl_->writers.size();
     impl_->oldest_snapshot(); result.active_snapshots = impl_->snapshots.size();
     for (const auto& table : impl_->tables) {
         result.sstable_bytes += table->bytes; result.sparse_index_entries += table->index.size();

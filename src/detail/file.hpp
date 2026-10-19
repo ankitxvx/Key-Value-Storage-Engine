@@ -14,7 +14,6 @@ public:
     std::size_t read(char* dst, std::size_t n);
     void write(std::string_view bytes);
     void sync();
-    void sync_data();
     void seek(std::uint64_t position);
     void truncate(std::uint64_t size);
 private:

@@ -22,19 +22,18 @@ void Store::Impl::submit(const std::vector<Mutation>& mutations) {
     healthy();
     Request request{mutations, false, {}};
     writers.push_back(&request);
-    // FIFO after admission. Release the mutex during WAL IO so new callers can
-    // actually join this queue rather than compete with the last writer for it.
-    cv.wait(guard, [&] { return request.done || (!writer_active && (error ||
-        (!checkpoint_pending && writers.front() == &request &&
-         (!immutable || memory_bytes < options.memtable_bytes)))); });
+    cv.wait(guard, [&] { return request.done || (!writer_active && (error || writers.front() == &request)); });
     if (!request.done && !error) {
         writer_active = true;
-        const auto count = options.group_commit ? std::min<std::size_t>(64, writers.size()) : 1;
+        if (options.group_commit_delay_us)
+            cv.wait_for(guard, std::chrono::microseconds(options.group_commit_delay_us), [&] { return error || writers.size() >= 64; });
+        const auto count = std::min<std::size_t>(64, writers.size());
         try {
             healthy();
+            // Apply backpressure while a slow flush owns the immutable table.
+            cv.wait(guard, [&] { return error || !immutable || memory_bytes < options.memtable_bytes; });
+            healthy();
             std::vector<std::vector<Record>> groups;
-            std::vector<std::string> frames;
-            std::uint64_t written_bytes = 0;
             auto next = sequence;
             for (std::size_t i = 0; i < count; ++i) {
                 groups.emplace_back();
@@ -42,33 +41,22 @@ void Store::Impl::submit(const std::vector<Mutation>& mutations) {
                     if (next == std::numeric_limits<std::uint64_t>::max()) fail("Sequence exhausted");
                     groups.back().push_back({++next, m.type == Mutation::Type::Erase, m.key, m.value});
                 }
-                frames.push_back(encode_batch(groups.back()));
-                written_bytes += frames.back().size();
-            }
-            // Only this leader owns WAL IO. Checkpoint publication explicitly
-            // waits for writer_active to clear before replacing the WAL handle.
-            guard.unlock();
-            for (const auto& frame : frames) {
+                const auto frame = encode_batch(groups.back());
                 inject(options.fault_injector, "wal.write");
                 wal->write(frame);
+                counters.wal_bytes_written += frame.size();
                 inject(options.fault_injector, "wal.after_write");
             }
             inject(options.fault_injector, "wal.sync");
-            wal->sync_data();
+            wal->sync();
             inject(options.fault_injector, "wal.after_sync");
-            guard.lock();
-            healthy();
-            counters.wal_bytes_written += written_bytes;
             ++counters.wal_syncs;
             if (count > 1) counters.grouped_requests += count;
             for (const auto& group : groups) for (const auto& r : group) add(r);
             sequence = next;
             counters.writes += next - (groups.front().front().sequence - 1);
             counters.batches += count;
-        } catch (...) {
-            if (!guard.owns_lock()) guard.lock();
-            if (!error) error = std::current_exception();
-        }
+        } catch (...) { error = std::current_exception(); }
         for (std::size_t i = 0; i < count; ++i) {
             writers.front()->error = error;
             writers.front()->done = true;

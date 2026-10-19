@@ -26,7 +26,7 @@ struct Store::Impl {
     std::uint64_t compact_requested = 0, compact_completed = 0;
     std::size_t memory_bytes = 0;
     std::exception_ptr error;
-    bool stopping = false, writer_active = false, checkpoint_pending = false;
+    bool stopping = false, writer_active = false;
     std::thread worker;
     std::shared_ptr<const int> identity = std::make_shared<const int>(0);
     mutable std::vector<std::weak_ptr<const std::uint64_t>> snapshots;

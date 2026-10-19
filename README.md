@@ -89,15 +89,9 @@ order. Readers cannot observe a batch halfway through, and recovery either
 replays the entire envelope or discards an incomplete trailing envelope. The
 payload limit is 64 MiB per single record or complete batch, including framing.
 
-Concurrent writers join a FIFO queue. Its first request becomes the leader and
-immediately syncs up to 64 requests already queued, without a collection timer.
-Followers arriving during IO join the next group. The leader releases the state
-mutex during WAL IO so followers can enqueue and readers can proceed. Grouping
-disabled uses the same admission/handoff protocol but syncs one request at a time.
-FIFO applies after queue admission; OS scheduling is not a hard fairness guarantee.
-Each request retains its own atomic envelope. Successful calls return only after
-`fdatasync` on Linux, `_commit` on Windows, or `fsync` on other POSIX systems,
-followed by in-memory publication. A failed or interrupted call
+Concurrent writers queue briefly and share a WAL sync. Each request retains its
+own atomic envelope. Successful calls return only after `_commit` on Windows or
+`fsync` on POSIX, followed by in-memory publication. A failed or interrupted call
 may have committed; applications must account for that ambiguity. Group commit
 does not introduce read-modify-write transactions or conflict detection.
 
@@ -114,10 +108,6 @@ Publication order is:
 3. Replace the WAL atomically with a synced file containing only active versions
    newer than the checkpoint.
 
-WAL replacement waits for the current leader's IO and publication to finish,
-and blocks new leaders until the checkpoint completes. This prevents replacing
-a WAL handle underneath a writer. Backpressure is applied before leader election,
-so it cannot deadlock a checkpoint waiting for that leader.
 The WAL rewrite holds the mutex; large active MemTables can briefly stall calls.
 Old WAL records left after a crash are skipped using the manifest checkpoint.
 Unpublished temporary files are ignored; unreferenced SSTables are reclaimed on
@@ -166,7 +156,7 @@ scans, WAL syncs/bytes, grouped requests, cache hits/misses, disk block reads, B
 skips, flushes, compactions, reclaimed versions, and cumulative successful point
 read/write latency. Gauges include sequence/checkpoint, active snapshots, live
 SSTable bytes/count, sparse index entries, Bloom bytes, cache bytes, and MemTable
-bytes and pending writers. Retired files pinned by a backup are excluded from live SSTable gauges.
+bytes. Retired files pinned by a backup are excluded from live SSTable gauges.
 
 | Option | Default | Meaning |
 |---|---:|---|
@@ -175,7 +165,7 @@ bytes and pending writers. Retired files pinned by a backup are excluded from li
 | `cache_bytes` | 8 MiB | Accounted decoded block budget; zero disables caching |
 | `bloom_bits_per_key` | 10 | Filter size, seven hash probes; zero disables filters |
 | `compaction_table_trigger` | 8 | Automatic merge threshold; zero disables, one is invalid |
-| `group_commit` | `true` | Set false for one durable sync per request with no collection delay |
+| `group_commit_delay_us` | 200 | Collection interval; OS scheduling can extend it; zero removes deliberate wait |
 | `fault_injector` | empty | Thread-safe test callback for named failure/crash points |
 
 ## Backup and restore
@@ -220,38 +210,6 @@ grouping, cache activity, and Bloom skips. Its first read pass starts with an em
 application cache; it does not clear the OS page cache. Successful runs remove
 their temporary database. Compare Release builds on the same filesystem/device;
 these numbers are not a general storage performance claim.
-
-For a controlled comparison of the current group-commit policy against an
-ungrouped durable baseline, run:
-
-```sh
-./build/kv_commit_bench 32768 10 commit-results.csv
-```
-
-This runs 1, 4, 8, and 16 synchronized writer threads with grouping off/on,
-alternating case order across rounds. Each case uses a fresh database, 64 untimed
-warmup writes, 128-byte values, and records every operation's end-to-end latency.
-CSV output includes throughput, mean and nearest-rank p50/p95/p99/p99.9/max
-latency, and sync counts. Sync remains enabled in both modes (`fdatasync` on Linux,
-`fsync` on other POSIX systems, `_commit` on Windows). Neither mode uses a
-collection delay; the former `group_commit_delay_us` option has been removed.
-Use `kv_wait_probe` to reproduce the old 200-microsecond wait independently.
-
-The comparison isolates WAL commits: a 256 MiB MemTable and disabled automatic
-compaction keep background IO outside the timed region. It uses a closed-loop
-workload (one outstanding request per writer), not fixed-rate arrival traffic.
-All acknowledged keys are checked after reopening each case. Supply an existing
-data-parent directory as a fourth argument to choose the tested filesystem.
-The CSV path must not already exist. Recovery validation is not a recovery-time
-benchmark; write amplification is not measured by this tool.
-
-The [group-commit investigation](benchmarks/group-commit-investigation.md) records
-the old timer/admission problems, deterministic regression tests, and the larger
-Linux benchmark protocol. Generate a table with ranges from a complete matrix:
-
-```sh
-python3 benchmarks/summarize_commit.py commit-results.csv --rounds 10 --output commit-summary.md
-```
 
 ## Remaining boundaries
 
