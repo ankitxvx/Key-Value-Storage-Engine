@@ -25,9 +25,9 @@ void Store::Impl::submit(const std::vector<Mutation>& mutations) {
     cv.wait(guard, [&] { return request.done || (!writer_active && (error || writers.front() == &request)); });
     if (!request.done && !error) {
         writer_active = true;
-        if (options.group_commit_delay_us)
+        if (options.group_commit && options.group_commit_delay_us)
             cv.wait_for(guard, std::chrono::microseconds(options.group_commit_delay_us), [&] { return error || writers.size() >= 64; });
-        const auto count = std::min<std::size_t>(64, writers.size());
+        const auto count = options.group_commit ? std::min<std::size_t>(64, writers.size()) : 1;
         try {
             healthy();
             // Apply backpressure while a slow flush owns the immutable table.

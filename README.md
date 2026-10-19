@@ -166,6 +166,7 @@ bytes. Retired files pinned by a backup are excluded from live SSTable gauges.
 | `bloom_bits_per_key` | 10 | Filter size, seven hash probes; zero disables filters |
 | `compaction_table_trigger` | 8 | Automatic merge threshold; zero disables, one is invalid |
 | `group_commit_delay_us` | 200 | Collection interval; OS scheduling can extend it; zero removes deliberate wait |
+| `group_commit` | `true` | Set false for one durable sync per request with no collection delay |
 | `fault_injector` | empty | Thread-safe test callback for named failure/crash points |
 
 ## Backup and restore
@@ -210,6 +211,28 @@ grouping, cache activity, and Bloom skips. Its first read pass starts with an em
 application cache; it does not clear the OS page cache. Successful runs remove
 their temporary database. Compare Release builds on the same filesystem/device;
 these numbers are not a general storage performance claim.
+
+For a controlled comparison of the current group-commit policy against an
+ungrouped durable baseline, run:
+
+```sh
+./build/kv_commit_bench 4096 3 commit-results.csv
+```
+
+This runs 1, 4, 8, and 16 synchronized writer threads with grouping off/on,
+alternating case order across rounds. Each case uses a fresh database, 64 untimed
+warmup writes, 128-byte values, and records every operation's end-to-end latency.
+CSV output includes throughput, nearest-rank p50/p95/p99/max latency, and sync
+counts. Sync remains enabled in both modes (`fsync` on POSIX, `_commit` on Windows).
+Disabling group commit is distinct from merely setting its delay to zero.
+
+The comparison isolates WAL commits: a 256 MiB MemTable and disabled automatic
+compaction keep background IO outside the timed region. It uses a closed-loop
+workload (one outstanding request per writer), not fixed-rate arrival traffic.
+All acknowledged keys are checked after reopening each case. Supply an existing
+data-parent directory as a fourth argument to choose the tested filesystem.
+The CSV path must not already exist. Recovery validation is not a recovery-time
+benchmark; write amplification is not measured by this tool.
 
 ## Remaining boundaries
 

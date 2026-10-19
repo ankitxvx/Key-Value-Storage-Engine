@@ -22,6 +22,8 @@ struct Options {
     std::uint32_t group_commit_delay_us = 200;
     // Test seam: may throw or terminate the process. Called on caller/worker threads.
     std::function<void(std::string_view)> fault_injector;
+    // False forces one durable WAL sync per request, without a collection delay.
+    bool group_commit = true;
 };
 
 struct Mutation {

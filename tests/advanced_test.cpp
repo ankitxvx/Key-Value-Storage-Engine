@@ -176,6 +176,19 @@ int main(int argc, char** argv) {
                   "group commit did not combine writes");
         }
         {
+            auto opts = manual; opts.group_commit = false; opts.group_commit_delay_us = 1000000;
+            kv::Store db(root / "group-disabled", opts);
+            std::vector<std::thread> writers;
+            std::atomic<bool> okay{true};
+            for (int t = 0; t < 4; ++t) writers.emplace_back([&, t] {
+                try { for (int i = 0; i < 8; ++i) db.put(std::to_string(t), std::to_string(i)); }
+                catch (...) { okay = false; }
+            });
+            for (auto& writer : writers) writer.join();
+            check(okay && db.metrics().writes == 32 && db.metrics().wal_syncs == 32 && db.metrics().grouped_requests == 0,
+                  "disabled group commit combined requests");
+        }
+        {
             // Hold table IO outside the mutex; a foreground write must still finish.
             auto opts = manual; opts.memtable_bytes = 80;
             std::promise<void> reached, release;
