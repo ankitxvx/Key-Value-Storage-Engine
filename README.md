@@ -17,6 +17,57 @@ With MinGW on Windows, add `-G "MinGW Makefiles"` to the configure command and
 put the MinGW compiler and `mingw32-make` on PATH. Run `build/kv_demo` for a small
 example. Multi-configuration generators put executables in `build/Release`.
 
+## Interactive command line
+
+After building, start the local database shell:
+
+```sh
+./build/kv_cli my-database
+```
+
+The directory is created if needed. Reopen the same directory to access saved
+data. Omitting the argument uses `kv-data` in the current working directory.
+For a multi-configuration build, use `build/Release/kv_cli.exe`.
+
+```text
+kv> SET name "Ankit Kumar"
+OK
+kv> GET name
+"Ankit Kumar"
+kv> EXISTS name
+1
+kv> SCAN
+"name" => "Ankit Kumar"
+kv> DEL name
+1
+kv> GET name
+(nil)
+kv> EXIT
+```
+
+Commands are case-insensitive; keys and values are case-sensitive. `SET` and
+`DEL` are durable when they return successfully. Single/double quotes support
+spaces and empty strings. Supported escapes are `\n`, `\r`, `\t`, `\0`, `\\`,
+`\"`, `\'`, and backslash followed by a space. Malformed input is rejected
+before executing a command. `GET` and `SCAN` quote and escape their output.
+
+`HELP` lists commands. `SCAN [begin [end]]` materializes a sorted half-open range;
+it is not Redis cursor-based SCAN. `FLUSH` checkpoints data, and `COMPACT` merges
+disk tables; neither command clears the database. `EXIT`, `QUIT`, or end-of-input
+closes the shell. Storage errors exit with a nonzero status; command syntax
+errors print `ERR` and allow another command.
+
+You can also pipe commands; redirected sessions omit the banner and prompt:
+
+```sh
+printf 'SET language C++17\nGET language\nEXIT\n' | ./build/kv_cli my-database
+```
+
+This is a local shell using the library API, not a Redis network server; it does
+not accept `redis-cli` connections. Only one process may open a database directory
+at a time. `kv_cli_tests` checks command handling, escaping, and persistence across
+separate shell processes.
+
 ## Source layout
 
 The public API stays in `include/kv/store.hpp`. Implementation headers are private
