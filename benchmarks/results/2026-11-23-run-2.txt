@@ -1,0 +1,11 @@
+config: operations=100000; writers=4; value_bytes=128; memtable_bytes=262144; cache_bytes=33554432; bloom_bits_per_key=10; read_seed=42; directory=/var/tmp/kv-bench-292991854518
+durable writes: 936.384 ops/s; latency us p50=2731.07 p95=17568.6 p99=22551.9
+write metrics: WAL syncs=25008; grouped requests=99996
+random reads first pass: 197973 ops/s; latency us p50=1.769 p95=3.671 p99=123.22
+read metrics: cache_hits=99037; block_reads=981; bloom_checks=578237; bloom_skips=474910
+random reads second pass: 502540 ops/s; latency us p50=1.666 p95=2.985 p99=7.093
+read metrics: cache_hits=100018; block_reads=0; bloom_checks=578237; bloom_skips=474910
+missing reads: 1.91955e+06 ops/s; latency us p50=0.413 p95=0.626 p99=1.831
+read metrics: cache_hits=1002; block_reads=0; bloom_checks=600000; bloom_skips=595682
+scan: 100000 rows in 0.123356 s
+compaction: 0.802905 s; disk=16188906 bytes; tables=1; WAL syncs=25008; grouped requests=99996; cache hits=201038; block reads=981; Bloom skips=1545502

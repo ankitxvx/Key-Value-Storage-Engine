@@ -278,6 +278,8 @@ int main(int argc, char** argv) {
             for (int i = 0; i < 50; ++i) { db.put("same", std::to_string(i)); views.push_back(db.snapshot()); }
             db.flush(); db.compact();
             for (int i = 0; i < 50; ++i) check(db.get("same", views[i]) == std::to_string(i), "large version block lost history");
+            check(db.scan() == kv::Rows{{"same", "49"}}, "uncached scan lost block lifetime");
+            check(db.scan("", std::nullopt, views[10]) == kv::Rows{{"same", "10"}}, "uncached snapshot scan lost history");
             check(db.metrics().cache_bytes == 0 && db.metrics().bloom_bytes == 0, "disabled optimizations allocated memory");
         }
         for (const std::string stage : {"wal.write", "wal.sync", "table.record", "table.sync", "table.publish",

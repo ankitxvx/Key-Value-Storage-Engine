@@ -204,12 +204,25 @@ Run the benchmark with operation and writer-thread counts:
 ./build/kv_bench 10000 4
 ```
 
+Optional third and fourth arguments set cache bytes and Bloom bits per key:
+
+```sh
+TMPDIR=/var/tmp ./build/kv_bench 100000 4 33554432 10
+```
+
+Use a disk-backed temporary directory for durable-storage measurements; some Linux
+systems mount `/tmp` as RAM-backed tmpfs. Reads use a fixed-seed shuffled key order,
+and both point reads and scans validate returned values. Each read phase reports
+its own cache, block-read, and Bloom-filter counters. Missing keys are interspersed
+within the populated key range.
+
 It uses a unique temporary database and reports durable write/read throughput,
 p50/p95/p99 operation latency, scan/compaction time, live disk usage, WAL syncs,
 grouping, cache activity, and Bloom skips. Its first read pass starts with an empty
 application cache; it does not clear the OS page cache. Successful runs remove
 their temporary database. Compare Release builds on the same filesystem/device;
-these numbers are not a general storage performance claim.
+these numbers are not a general storage performance claim. Recorded measurements
+and their conditions are in [benchmarks/RESULTS.md](benchmarks/RESULTS.md).
 
 ## Remaining boundaries
 

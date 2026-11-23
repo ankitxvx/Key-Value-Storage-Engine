@@ -82,7 +82,8 @@ Rows Store::Impl::scan(std::string_view begin, std::optional<std::string_view> e
         const auto& part = table->index[i];
         if (end && part.first_key >= *end) break;
         if (i + 1 < table->index.size() && table->index[i + 1].first_key <= begin) continue;
-        for (const auto& r : *block(*table, part)) visit(r);
+        const auto records = block(*table, part);
+        for (const auto& r : *records) visit(r);
     }
     Rows rows;
     for (auto& pair : selected) if (!pair.second.tombstone)
